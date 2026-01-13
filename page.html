@@ -264,8 +264,8 @@
       differences.forEach((diff) => {
         const clone = rowTemplate.content.cloneNode(true);
         clone.querySelector('.cell-ref').textContent = diff.cell;
-        clone.querySelector('.old-value').textContent = formatValue(diff.oldValue);
-        clone.querySelector('.new-value').textContent = formatValue(diff.newValue);
+        clone.querySelector('.old-value').textContent = diff.oldDisplay;
+        clone.querySelector('.new-value').textContent = diff.newDisplay;
 
         const oldContext = clone.querySelector('.context-old');
         const newContext = clone.querySelector('.context-new');
@@ -274,6 +274,17 @@
 
         reportBody.appendChild(clone);
       });
+    };
+
+    const getCellInfo = (sheet, matrix, row, col) => {
+      const cellRef = XLSX.utils.encode_cell({ r: row, c: col });
+      const cell = sheet?.[cellRef];
+      const value = matrix[row]?.[col] ?? '';
+      const formula = cell?.f ?? null;
+      const display = formula ? `=${formula} (value: ${formatValue(value)})` : formatValue(value);
+      const compareKey = `${formula ?? ''}::${compareValue(value)}`;
+
+      return { value, formula, display, compareKey };
     };
 
     const compareSheets = () => {
@@ -298,15 +309,17 @@
 
       for (let r = 0; r < maxRows; r += 1) {
         for (let c = 0; c < maxCols; c += 1) {
-          const oldValue = state.oldData[r]?.[c] ?? '';
-          const newValue = state.newData[r]?.[c] ?? '';
-          if (compareValue(oldValue) !== compareValue(newValue)) {
+          const oldInfo = getCellInfo(state.oldSheet, state.oldData, r, c);
+          const newInfo = getCellInfo(state.newSheet, state.newData, r, c);
+          if (oldInfo.compareKey !== newInfo.compareKey) {
             differences.push({
               row: r,
               col: c,
               cell: XLSX.utils.encode_cell({ r, c }),
-              oldValue,
-              newValue
+              oldValue: oldInfo.value,
+              newValue: newInfo.value,
+              oldDisplay: oldInfo.display,
+              newDisplay: newInfo.display
             });
           }
         }
@@ -315,7 +328,7 @@
       renderReport(differences, radius);
       changeCount.textContent = differences.length.toLocaleString();
       sheetInfo.textContent = `${state.oldName} → ${state.newName}`;
-      reportSummary.textContent = `Showing ${differences.length.toLocaleString()} changes (${radius}-cell radius).`;
+      reportSummary.textContent = `Sheet: ${state.oldName} → ${state.newName}. Showing ${differences.length.toLocaleString()} changes (${radius}-cell radius).`;
       lastRun.textContent = new Date().toLocaleString();
     };
 
