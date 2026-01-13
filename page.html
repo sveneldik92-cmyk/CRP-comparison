@@ -54,7 +54,7 @@
           <section class="bg-white border border-slate-200 rounded-2xl shadow-sm">
             <div class="p-4 border-b border-slate-200">
               <h2 class="text-sm font-semibold text-slate-800">Upload files</h2>
-              <p class="text-xs text-slate-500 mt-1">Select two Excel files (.xlsx/.xls/.xlsm/.xltm). We compare the first worksheet in each file.</p>
+              <p class="text-xs text-slate-500 mt-1">Select two Excel files (.xlsx/.xls/.xlsm/.xltm). We compare every worksheet found in either file.</p>
             </div>
             <div class="p-4 space-y-4">
               <div>
@@ -121,6 +121,15 @@
               </div>
               <span id="reportSummary" class="text-xs text-slate-500">Upload files to begin.</span>
             </div>
+            <div id="loadingPanel" class="hidden px-4 py-3 border-b border-slate-200 bg-slate-50">
+              <div class="flex items-center justify-between text-xs text-slate-600">
+                <span id="loadingText">Preparing comparison...</span>
+                <span id="loadingPercent">0%</span>
+              </div>
+              <div class="mt-2 h-2 w-full rounded-full bg-slate-200 overflow-hidden">
+                <div id="loadingBar" class="h-full bg-blue-600 transition-all" style="width: 0%;"></div>
+              </div>
+            </div>
             <div id="reportBody" class="divide-y divide-slate-200">
               <div class="p-8 text-center text-sm text-slate-500">No comparison yet.</div>
             </div>
@@ -135,14 +144,18 @@
       <summary class="cursor-pointer list-none">
         <div class="p-4 grid grid-cols-1 md:grid-cols-12 gap-3 items-center hover:bg-slate-50">
           <div class="md:col-span-2">
+            <p class="text-xs text-slate-500">Worksheet</p>
+            <p class="text-sm font-semibold text-slate-800 sheet-name"></p>
+          </div>
+          <div class="md:col-span-2">
             <p class="text-xs text-slate-500">Cell</p>
             <p class="text-sm font-semibold text-slate-800 cell-ref"></p>
           </div>
-          <div class="md:col-span-5">
+          <div class="md:col-span-4">
             <p class="text-xs text-slate-500">Old value</p>
             <p class="text-sm text-slate-800 old-value break-words"></p>
           </div>
-          <div class="md:col-span-5">
+          <div class="md:col-span-4">
             <p class="text-xs text-slate-500">New value</p>
             <p class="text-sm text-slate-800 new-value break-words"></p>
           </div>
@@ -165,12 +178,12 @@
 
   <script>
     const state = {
-      oldSheet: null,
-      newSheet: null,
-      oldName: null,
-      newName: null,
-      oldData: [],
-      newData: []
+      oldWorkbook: null,
+      newWorkbook: null,
+      oldSheets: {},
+      newSheets: {},
+      oldSheetNames: [],
+      newSheetNames: []
     };
 
     const fileOld = document.getElementById('fileOld');
@@ -186,6 +199,10 @@
     const lastRun = document.getElementById('lastRun');
     const clearReport = document.getElementById('clearReport');
     const rowTemplate = document.getElementById('changeRowTemplate');
+    const loadingPanel = document.getElementById('loadingPanel');
+    const loadingText = document.getElementById('loadingText');
+    const loadingPercent = document.getElementById('loadingPercent');
+    const loadingBar = document.getElementById('loadingBar');
 
     const formatValue = (value) => {
       if (value === null || value === undefined || value === '') {
@@ -212,9 +229,15 @@
           try {
             const data = new Uint8Array(event.target.result);
             const workbook = XLSX.read(data, { type: 'array' });
-            const sheetName = workbook.SheetNames[0];
-            const worksheet = workbook.Sheets[sheetName];
-            resolve({ workbook, sheetName, worksheet, data: toMatrix(worksheet) });
+            const sheets = {};
+            workbook.SheetNames.forEach((sheetName) => {
+              const worksheet = workbook.Sheets[sheetName];
+              sheets[sheetName] = {
+                worksheet,
+                data: toMatrix(worksheet)
+              };
+            });
+            resolve({ workbook, sheetNames: workbook.SheetNames, sheets });
           } catch (error) {
             reject(error);
           }
@@ -263,14 +286,15 @@
 
       differences.forEach((diff) => {
         const clone = rowTemplate.content.cloneNode(true);
+        clone.querySelector('.sheet-name').textContent = diff.sheetName;
         clone.querySelector('.cell-ref').textContent = diff.cell;
         clone.querySelector('.old-value').textContent = diff.oldDisplay;
         clone.querySelector('.new-value').textContent = diff.newDisplay;
 
         const oldContext = clone.querySelector('.context-old');
         const newContext = clone.querySelector('.context-new');
-        oldContext.appendChild(buildContextTable(state.oldData, diff.row, diff.col, radius));
-        newContext.appendChild(buildContextTable(state.newData, diff.row, diff.col, radius));
+        oldContext.appendChild(buildContextTable(diff.oldData, diff.row, diff.col, radius));
+        newContext.appendChild(buildContextTable(diff.newData, diff.row, diff.col, radius));
 
         reportBody.appendChild(clone);
       });
@@ -287,8 +311,70 @@
       return { value, formula, display, compareKey };
     };
 
-    const compareSheets = () => {
-      if (!state.oldSheet || !state.newSheet) {
+    const updateLoading = ({ active, message, progress }) => {
+      if (!active) {
+        loadingPanel.classList.add('hidden');
+        compareBtn.disabled = false;
+        compareBtn.classList.remove('opacity-60', 'cursor-not-allowed');
+        return;
+      }
+      loadingPanel.classList.remove('hidden');
+      compareBtn.disabled = true;
+      compareBtn.classList.add('opacity-60', 'cursor-not-allowed');
+      if (message) {
+        loadingText.textContent = message;
+      }
+      if (typeof progress === 'number') {
+        const clamped = Math.max(0, Math.min(100, progress));
+        loadingPercent.textContent = `${Math.round(clamped)}%`;
+        loadingBar.style.width = `${clamped}%`;
+      }
+    };
+
+    const nextFrame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
+
+    const compareSheetData = (sheetName, oldSheet, oldData, newSheet, newData) => {
+      const oldRows = oldData.length;
+      const newRows = newData.length;
+      const maxRows = Math.max(oldRows, newRows);
+      const maxCols = Math.max(
+        ...oldData.map((row) => row.length),
+        ...newData.map((row) => row.length),
+        0
+      );
+
+      if (maxRows === 0 || maxCols === 0) {
+        return [];
+      }
+
+      const sheetDifferences = [];
+
+      for (let r = 0; r < maxRows; r += 1) {
+        for (let c = 0; c < maxCols; c += 1) {
+          const oldInfo = getCellInfo(oldSheet, oldData, r, c);
+          const newInfo = getCellInfo(newSheet, newData, r, c);
+          if (oldInfo.compareKey !== newInfo.compareKey) {
+            sheetDifferences.push({
+              sheetName,
+              row: r,
+              col: c,
+              cell: XLSX.utils.encode_cell({ r, c }),
+              oldValue: oldInfo.value,
+              newValue: newInfo.value,
+              oldDisplay: oldInfo.display,
+              newDisplay: newInfo.display,
+              oldData,
+              newData
+            });
+          }
+        }
+      }
+
+      return sheetDifferences;
+    };
+
+    const compareSheets = async () => {
+      if (!state.oldWorkbook || !state.newWorkbook) {
         reportBody.innerHTML = '<div class="p-8 text-center text-sm text-slate-500">Please upload both files before comparing.</div>';
         return;
       }
@@ -296,39 +382,42 @@
       const radius = Math.max(1, Math.min(5, Number(contextRadius.value) || 1));
       contextRadius.value = radius;
 
-      const oldRows = state.oldData.length;
-      const newRows = state.newData.length;
-      const maxRows = Math.max(oldRows, newRows);
-      const maxCols = Math.max(
-        ...state.oldData.map((row) => row.length),
-        ...state.newData.map((row) => row.length),
-        0
+      const allSheetNames = Array.from(
+        new Set([...state.oldSheetNames, ...state.newSheetNames])
       );
 
       const differences = [];
+      updateLoading({ active: true, message: 'Preparing comparison...', progress: 0 });
+      await nextFrame();
 
-      for (let r = 0; r < maxRows; r += 1) {
-        for (let c = 0; c < maxCols; c += 1) {
-          const oldInfo = getCellInfo(state.oldSheet, state.oldData, r, c);
-          const newInfo = getCellInfo(state.newSheet, state.newData, r, c);
-          if (oldInfo.compareKey !== newInfo.compareKey) {
-            differences.push({
-              row: r,
-              col: c,
-              cell: XLSX.utils.encode_cell({ r, c }),
-              oldValue: oldInfo.value,
-              newValue: newInfo.value,
-              oldDisplay: oldInfo.display,
-              newDisplay: newInfo.display
-            });
-          }
-        }
+      for (let index = 0; index < allSheetNames.length; index += 1) {
+        const sheetName = allSheetNames[index];
+        const progress = ((index + 1) / allSheetNames.length) * 100;
+        updateLoading({
+          active: true,
+          message: `Comparing worksheet ${index + 1} of ${allSheetNames.length}: ${sheetName}`,
+          progress
+        });
+        await nextFrame();
+
+        const oldEntry = state.oldSheets[sheetName];
+        const newEntry = state.newSheets[sheetName];
+        const oldSheet = oldEntry?.worksheet ?? null;
+        const newSheet = newEntry?.worksheet ?? null;
+        const oldData = oldEntry?.data ?? [];
+        const newData = newEntry?.data ?? [];
+
+        differences.push(
+          ...compareSheetData(sheetName, oldSheet, oldData, newSheet, newData)
+        );
       }
+
+      updateLoading({ active: false, progress: 100 });
 
       renderReport(differences, radius);
       changeCount.textContent = differences.length.toLocaleString();
-      sheetInfo.textContent = `${state.oldName} → ${state.newName}`;
-      reportSummary.textContent = `Sheet: ${state.oldName} → ${state.newName}. Showing ${differences.length.toLocaleString()} changes (${radius}-cell radius).`;
+      sheetInfo.textContent = `${allSheetNames.length} worksheet${allSheetNames.length === 1 ? '' : 's'} compared`;
+      reportSummary.textContent = `Compared ${allSheetNames.length} worksheet${allSheetNames.length === 1 ? '' : 's'}. Showing ${differences.length.toLocaleString()} changes (${radius}-cell radius).`;
       lastRun.textContent = new Date().toLocaleString();
     };
 
@@ -338,21 +427,23 @@
       changeCount.textContent = '0';
       sheetInfo.textContent = '—';
       lastRun.textContent = '—';
+      updateLoading({ active: false, progress: 0 });
     };
 
     fileOld.addEventListener('change', async (event) => {
       const file = event.target.files[0];
       setFileName(fileOldName, file);
       if (!file) {
-        state.oldSheet = null;
-        state.oldData = [];
+        state.oldWorkbook = null;
+        state.oldSheets = {};
+        state.oldSheetNames = [];
         return;
       }
       try {
-        const { sheetName, worksheet, data } = await loadWorkbook(file);
-        state.oldSheet = worksheet;
-        state.oldName = sheetName;
-        state.oldData = data;
+        const { workbook, sheetNames, sheets } = await loadWorkbook(file);
+        state.oldWorkbook = workbook;
+        state.oldSheetNames = sheetNames;
+        state.oldSheets = sheets;
       } catch (error) {
         reportBody.innerHTML = '<div class="p-8 text-center text-sm text-rose-500">Unable to read the original workbook.</div>';
       }
@@ -362,15 +453,16 @@
       const file = event.target.files[0];
       setFileName(fileNewName, file);
       if (!file) {
-        state.newSheet = null;
-        state.newData = [];
+        state.newWorkbook = null;
+        state.newSheets = {};
+        state.newSheetNames = [];
         return;
       }
       try {
-        const { sheetName, worksheet, data } = await loadWorkbook(file);
-        state.newSheet = worksheet;
-        state.newName = sheetName;
-        state.newData = data;
+        const { workbook, sheetNames, sheets } = await loadWorkbook(file);
+        state.newWorkbook = workbook;
+        state.newSheetNames = sheetNames;
+        state.newSheets = sheets;
       } catch (error) {
         reportBody.innerHTML = '<div class="p-8 text-center text-sm text-rose-500">Unable to read the updated workbook.</div>';
       }
@@ -382,10 +474,12 @@
       fileNew.value = '';
       setFileName(fileOldName, null);
       setFileName(fileNewName, null);
-      state.oldSheet = null;
-      state.newSheet = null;
-      state.oldData = [];
-      state.newData = [];
+      state.oldWorkbook = null;
+      state.newWorkbook = null;
+      state.oldSheets = {};
+      state.newSheets = {};
+      state.oldSheetNames = [];
+      state.newSheetNames = [];
       resetReport();
     });
 
