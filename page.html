@@ -1,14 +1,382 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <title></title>
-  <link href="style.css" rel="stylesheet" />
-</head>
-<body>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Excel Difference Report</title>
 
-  <script src="http://ajax.googleapis.com/ajax/libs/jquery/1/jquery.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
   <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['ui-sans-serif', 'system-ui', 'Segoe UI', 'Roboto', 'Helvetica', 'Arial', 'Noto Sans', 'Apple Color Emoji', 'Segoe UI Emoji']
+          }
+        }
+      }
+    };
+  </script>
+</head>
+<body class="bg-slate-50 text-slate-900 font-sans">
+  <div class="min-h-screen">
+    <header class="sticky top-0 z-40 bg-white/90 backdrop-blur border-b border-slate-200">
+      <div class="max-w-[1440px] mx-auto px-4 sm:px-5 py-4">
+        <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div class="flex items-center gap-3">
+            <div class="h-10 w-10 rounded-xl bg-blue-700 flex items-center justify-center shadow-sm">
+              <span class="text-white font-semibold tracking-wide">XR</span>
+            </div>
+            <div>
+              <div class="text-sm text-slate-500">Spreadsheet Change Overview</div>
+              <h1 class="text-lg sm:text-xl font-semibold leading-tight">Excel Difference Report</h1>
+            </div>
+          </div>
+          <div class="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+            <span class="inline-flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-slate-100 border border-slate-200">
+              <span class="h-2 w-2 rounded-full bg-emerald-500"></span>
+              Local comparison (no uploads to server)
+            </span>
+            <button id="clearReport"
+              class="text-sm px-3 py-2 rounded-xl border border-slate-200 bg-white shadow-sm hover:bg-slate-50 active:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-200">
+              Clear report
+            </button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main class="max-w-[1440px] mx-auto px-4 sm:px-5 py-6">
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <aside class="lg:col-span-3 space-y-6">
+          <section class="bg-white border border-slate-200 rounded-2xl shadow-sm">
+            <div class="p-4 border-b border-slate-200">
+              <h2 class="text-sm font-semibold text-slate-800">Upload files</h2>
+              <p class="text-xs text-slate-500 mt-1">Select two Excel files (.xlsx/.xls). We compare the first worksheet in each file.</p>
+            </div>
+            <div class="p-4 space-y-4">
+              <div>
+                <label class="text-xs font-medium text-slate-600">Original workbook</label>
+                <input id="fileOld" type="file" accept=".xlsx,.xls"
+                  class="mt-2 w-full text-sm file:mr-3 file:px-3 file:py-2 file:rounded-lg file:border-0 file:bg-blue-700 file:text-white file:text-xs file:font-semibold hover:file:bg-blue-600" />
+                <p id="fileOldName" class="text-xs text-slate-500 mt-2">No file selected.</p>
+              </div>
+              <div>
+                <label class="text-xs font-medium text-slate-600">Updated workbook</label>
+                <input id="fileNew" type="file" accept=".xlsx,.xls"
+                  class="mt-2 w-full text-sm file:mr-3 file:px-3 file:py-2 file:rounded-lg file:border-0 file:bg-blue-700 file:text-white file:text-xs file:font-semibold hover:file:bg-blue-600" />
+                <p id="fileNewName" class="text-xs text-slate-500 mt-2">No file selected.</p>
+              </div>
+            </div>
+          </section>
+
+          <section class="bg-white border border-slate-200 rounded-2xl shadow-sm">
+            <div class="p-4 border-b border-slate-200">
+              <h2 class="text-sm font-semibold text-slate-800">Comparison settings</h2>
+              <p class="text-xs text-slate-500 mt-1">Control how many surrounding values appear around each changed cell.</p>
+            </div>
+            <div class="p-4 space-y-4">
+              <div>
+                <label class="text-xs font-medium text-slate-600" for="contextRadius">Surrounding distance</label>
+                <div class="flex items-center gap-2 mt-2">
+                  <input id="contextRadius" type="number" min="1" max="5" value="1"
+                    class="w-24 text-sm border border-slate-200 rounded-xl px-3 py-2 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-200" />
+                  <span class="text-xs text-slate-500">1 = 3×3, 2 = 5×5, 3 = 7×7</span>
+                </div>
+              </div>
+              <button id="compareBtn"
+                class="w-full text-sm px-3 py-2 rounded-xl bg-blue-700 text-white shadow-sm hover:bg-blue-600 active:bg-blue-800 focus:outline-none focus:ring-2 focus:ring-blue-200">
+                Compare workbooks
+              </button>
+              <div class="text-xs text-slate-500 leading-relaxed">
+                The report lists each changed cell, the previous value, and the new value. Expand any row to see the surrounding context from both files.
+              </div>
+            </div>
+          </section>
+        </aside>
+
+        <section class="lg:col-span-9 space-y-6">
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div class="bg-white border border-slate-200 rounded-2xl shadow-sm p-4">
+              <p class="text-xs text-slate-500">Compared worksheets</p>
+              <p id="sheetInfo" class="text-lg font-semibold text-slate-800">—</p>
+            </div>
+            <div class="bg-white border border-slate-200 rounded-2xl shadow-sm p-4">
+              <p class="text-xs text-slate-500">Total changes</p>
+              <p id="changeCount" class="text-lg font-semibold text-slate-800">0</p>
+            </div>
+            <div class="bg-white border border-slate-200 rounded-2xl shadow-sm p-4">
+              <p class="text-xs text-slate-500">Last comparison</p>
+              <p id="lastRun" class="text-lg font-semibold text-slate-800">—</p>
+            </div>
+          </div>
+
+          <section class="bg-white border border-slate-200 rounded-2xl shadow-sm">
+            <div class="p-4 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+              <div>
+                <h2 class="text-sm font-semibold text-slate-800">Change report</h2>
+                <p class="text-xs text-slate-500 mt-1">Expanded rows show surrounding values from both files.</p>
+              </div>
+              <span id="reportSummary" class="text-xs text-slate-500">Upload files to begin.</span>
+            </div>
+            <div id="reportBody" class="divide-y divide-slate-200">
+              <div class="p-8 text-center text-sm text-slate-500">No comparison yet.</div>
+            </div>
+          </section>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <template id="changeRowTemplate">
+    <details class="group">
+      <summary class="cursor-pointer list-none">
+        <div class="p-4 grid grid-cols-1 md:grid-cols-12 gap-3 items-center hover:bg-slate-50">
+          <div class="md:col-span-2">
+            <p class="text-xs text-slate-500">Cell</p>
+            <p class="text-sm font-semibold text-slate-800 cell-ref"></p>
+          </div>
+          <div class="md:col-span-5">
+            <p class="text-xs text-slate-500">Old value</p>
+            <p class="text-sm text-slate-800 old-value break-words"></p>
+          </div>
+          <div class="md:col-span-5">
+            <p class="text-xs text-slate-500">New value</p>
+            <p class="text-sm text-slate-800 new-value break-words"></p>
+          </div>
+        </div>
+      </summary>
+      <div class="border-t border-slate-200 bg-slate-50 px-4 py-5">
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div>
+            <p class="text-xs font-semibold text-slate-600">Original context</p>
+            <div class="context-old mt-2 overflow-auto"></div>
+          </div>
+          <div>
+            <p class="text-xs font-semibold text-slate-600">Updated context</p>
+            <div class="context-new mt-2 overflow-auto"></div>
+          </div>
+        </div>
+      </div>
+    </details>
+  </template>
+
+  <script>
+    const state = {
+      oldSheet: null,
+      newSheet: null,
+      oldName: null,
+      newName: null,
+      oldData: [],
+      newData: []
+    };
+
+    const fileOld = document.getElementById('fileOld');
+    const fileNew = document.getElementById('fileNew');
+    const fileOldName = document.getElementById('fileOldName');
+    const fileNewName = document.getElementById('fileNewName');
+    const contextRadius = document.getElementById('contextRadius');
+    const compareBtn = document.getElementById('compareBtn');
+    const reportBody = document.getElementById('reportBody');
+    const reportSummary = document.getElementById('reportSummary');
+    const sheetInfo = document.getElementById('sheetInfo');
+    const changeCount = document.getElementById('changeCount');
+    const lastRun = document.getElementById('lastRun');
+    const clearReport = document.getElementById('clearReport');
+    const rowTemplate = document.getElementById('changeRowTemplate');
+
+    const formatValue = (value) => {
+      if (value === null || value === undefined || value === '') {
+        return '—';
+      }
+      return String(value);
+    };
+
+    const compareValue = (value) => {
+      if (value === null || value === undefined) {
+        return '';
+      }
+      return String(value);
+    };
+
+    const toMatrix = (worksheet) => {
+      return XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
+    };
+
+    const loadWorkbook = (file) => {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          try {
+            const data = new Uint8Array(event.target.result);
+            const workbook = XLSX.read(data, { type: 'array' });
+            const sheetName = workbook.SheetNames[0];
+            const worksheet = workbook.Sheets[sheetName];
+            resolve({ workbook, sheetName, worksheet, data: toMatrix(worksheet) });
+          } catch (error) {
+            reject(error);
+          }
+        };
+        reader.onerror = () => reject(reader.error);
+        reader.readAsArrayBuffer(file);
+      });
+    };
+
+    const setFileName = (element, file) => {
+      element.textContent = file ? file.name : 'No file selected.';
+    };
+
+    const buildContextTable = (matrix, row, col, radius) => {
+      const table = document.createElement('table');
+      table.className = 'text-xs border-collapse bg-white border border-slate-200';
+      const startRow = Math.max(0, row - radius);
+      const endRow = Math.min(matrix.length - 1, row + radius);
+      const maxCols = Math.max(...matrix.map((r) => r.length), 0);
+      const startCol = Math.max(0, col - radius);
+      const endCol = Math.min(maxCols - 1, col + radius);
+
+      for (let r = startRow; r <= endRow; r += 1) {
+        const tr = document.createElement('tr');
+        for (let c = startCol; c <= endCol; c += 1) {
+          const td = document.createElement('td');
+          const value = matrix[r]?.[c] ?? '';
+          td.textContent = formatValue(value);
+          td.className = 'px-2 py-1 border border-slate-200 whitespace-nowrap';
+          if (r === row && c === col) {
+            td.className += ' bg-blue-50 text-blue-800 font-semibold';
+          }
+          tr.appendChild(td);
+        }
+        table.appendChild(tr);
+      }
+      return table;
+    };
+
+    const renderReport = (differences, radius) => {
+      reportBody.innerHTML = '';
+      if (!differences.length) {
+        reportBody.innerHTML = '<div class="p-8 text-center text-sm text-slate-500">No changes found between the files.</div>';
+        return;
+      }
+
+      differences.forEach((diff) => {
+        const clone = rowTemplate.content.cloneNode(true);
+        clone.querySelector('.cell-ref').textContent = diff.cell;
+        clone.querySelector('.old-value').textContent = formatValue(diff.oldValue);
+        clone.querySelector('.new-value').textContent = formatValue(diff.newValue);
+
+        const oldContext = clone.querySelector('.context-old');
+        const newContext = clone.querySelector('.context-new');
+        oldContext.appendChild(buildContextTable(state.oldData, diff.row, diff.col, radius));
+        newContext.appendChild(buildContextTable(state.newData, diff.row, diff.col, radius));
+
+        reportBody.appendChild(clone);
+      });
+    };
+
+    const compareSheets = () => {
+      if (!state.oldSheet || !state.newSheet) {
+        reportBody.innerHTML = '<div class="p-8 text-center text-sm text-slate-500">Please upload both files before comparing.</div>';
+        return;
+      }
+
+      const radius = Math.max(1, Math.min(5, Number(contextRadius.value) || 1));
+      contextRadius.value = radius;
+
+      const oldRows = state.oldData.length;
+      const newRows = state.newData.length;
+      const maxRows = Math.max(oldRows, newRows);
+      const maxCols = Math.max(
+        ...state.oldData.map((row) => row.length),
+        ...state.newData.map((row) => row.length),
+        0
+      );
+
+      const differences = [];
+
+      for (let r = 0; r < maxRows; r += 1) {
+        for (let c = 0; c < maxCols; c += 1) {
+          const oldValue = state.oldData[r]?.[c] ?? '';
+          const newValue = state.newData[r]?.[c] ?? '';
+          if (compareValue(oldValue) !== compareValue(newValue)) {
+            differences.push({
+              row: r,
+              col: c,
+              cell: XLSX.utils.encode_cell({ r, c }),
+              oldValue,
+              newValue
+            });
+          }
+        }
+      }
+
+      renderReport(differences, radius);
+      changeCount.textContent = differences.length.toLocaleString();
+      sheetInfo.textContent = `${state.oldName} → ${state.newName}`;
+      reportSummary.textContent = `Showing ${differences.length.toLocaleString()} changes (${radius}-cell radius).`;
+      lastRun.textContent = new Date().toLocaleString();
+    };
+
+    const resetReport = () => {
+      reportBody.innerHTML = '<div class="p-8 text-center text-sm text-slate-500">No comparison yet.</div>';
+      reportSummary.textContent = 'Upload files to begin.';
+      changeCount.textContent = '0';
+      sheetInfo.textContent = '—';
+      lastRun.textContent = '—';
+    };
+
+    fileOld.addEventListener('change', async (event) => {
+      const file = event.target.files[0];
+      setFileName(fileOldName, file);
+      if (!file) {
+        state.oldSheet = null;
+        state.oldData = [];
+        return;
+      }
+      try {
+        const { sheetName, worksheet, data } = await loadWorkbook(file);
+        state.oldSheet = worksheet;
+        state.oldName = sheetName;
+        state.oldData = data;
+      } catch (error) {
+        reportBody.innerHTML = '<div class="p-8 text-center text-sm text-rose-500">Unable to read the original workbook.</div>';
+      }
+    });
+
+    fileNew.addEventListener('change', async (event) => {
+      const file = event.target.files[0];
+      setFileName(fileNewName, file);
+      if (!file) {
+        state.newSheet = null;
+        state.newData = [];
+        return;
+      }
+      try {
+        const { sheetName, worksheet, data } = await loadWorkbook(file);
+        state.newSheet = worksheet;
+        state.newName = sheetName;
+        state.newData = data;
+      } catch (error) {
+        reportBody.innerHTML = '<div class="p-8 text-center text-sm text-rose-500">Unable to read the updated workbook.</div>';
+      }
+    });
+
+    compareBtn.addEventListener('click', compareSheets);
+    clearReport.addEventListener('click', () => {
+      fileOld.value = '';
+      fileNew.value = '';
+      setFileName(fileOldName, null);
+      setFileName(fileNewName, null);
+      state.oldSheet = null;
+      state.newSheet = null;
+      state.oldData = [];
+      state.newData = [];
+      resetReport();
+    });
+
+    resetReport();
   </script>
 </body>
 </html>
