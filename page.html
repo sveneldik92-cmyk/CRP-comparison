@@ -121,6 +121,41 @@
               </div>
               <div class="flex flex-wrap items-center gap-3 text-xs text-slate-500">
                 <span id="reportSummary">Upload files to begin.</span>
+                <details id="changeTypePanel" class="relative">
+                  <summary
+                    class="cursor-pointer select-none rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 shadow-sm hover:bg-slate-50">
+                    Change type
+                    <span id="changeTypeSummary" class="ml-1 text-slate-400">(all)</span>
+                  </summary>
+                  <div
+                    class="absolute right-0 mt-2 w-56 rounded-xl border border-slate-200 bg-white p-3 shadow-lg">
+                    <div class="flex items-center justify-between text-[11px] text-slate-500">
+                      <span>Show changes</span>
+                      <div class="flex items-center gap-2">
+                        <button id="selectAllChangeTypes" type="button"
+                          class="rounded-md border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50">
+                          All
+                        </button>
+                        <button id="clearChangeTypes" type="button"
+                          class="rounded-md border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50">
+                          None
+                        </button>
+                      </div>
+                    </div>
+                    <div class="mt-3 space-y-2 text-xs text-slate-600">
+                      <label class="flex items-center gap-2">
+                        <input id="filterFormulaChanges" type="checkbox"
+                          class="h-3 w-3 rounded border-slate-300 text-blue-600 focus:ring-blue-200" />
+                        Formula changes
+                      </label>
+                      <label class="flex items-center gap-2">
+                        <input id="filterValueChanges" type="checkbox"
+                          class="h-3 w-3 rounded border-slate-300 text-blue-600 focus:ring-blue-200" />
+                        Value changes
+                      </label>
+                    </div>
+                  </div>
+                </details>
                 <details id="sheetFilterPanel" class="relative">
                   <summary
                     class="cursor-pointer select-none rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 shadow-sm hover:bg-slate-50">
@@ -214,6 +249,10 @@
       newSheetNames: [],
       allSheetNames: [],
       activeSheetFilters: new Set(),
+      changeTypeFilters: {
+        formula: true,
+        value: true
+      },
       differences: [],
       lastRadius: 1
     };
@@ -235,6 +274,12 @@
     const sheetFilterList = document.getElementById('sheetFilterList');
     const selectAllSheets = document.getElementById('selectAllSheets');
     const clearSheetFilters = document.getElementById('clearSheetFilters');
+    const changeTypePanel = document.getElementById('changeTypePanel');
+    const changeTypeSummary = document.getElementById('changeTypeSummary');
+    const selectAllChangeTypes = document.getElementById('selectAllChangeTypes');
+    const clearChangeTypes = document.getElementById('clearChangeTypes');
+    const filterFormulaChanges = document.getElementById('filterFormulaChanges');
+    const filterValueChanges = document.getElementById('filterValueChanges');
     const rowTemplate = document.getElementById('changeRowTemplate');
     const loadingPanel = document.getElementById('loadingPanel');
     const loadingText = document.getElementById('loadingText');
@@ -388,6 +433,19 @@
       sheetFilterSummary.textContent = `(${active}/${total})`;
     };
 
+    const updateChangeTypeSummary = () => {
+      const { formula, value } = state.changeTypeFilters;
+      if (formula && value) {
+        changeTypeSummary.textContent = '(all)';
+        return;
+      }
+      if (!formula && !value) {
+        changeTypeSummary.textContent = '(none)';
+        return;
+      }
+      changeTypeSummary.textContent = formula ? '(formula)' : '(value)';
+    };
+
     const updateReportStats = (filteredDifferences) => {
       const totalDifferences = state.differences.length;
       const totalSheets = state.allSheetNames.length;
@@ -435,12 +493,24 @@
 
     const applyWorksheetFilters = () => {
       updateFilterSummary();
-      const filteredDifferences = state.differences.filter((diff) =>
-        state.activeSheetFilters.has(diff.sheetName)
-      );
-      const emptyMessage = state.activeSheetFilters.size
-        ? 'No changes found for the selected worksheets.'
-        : 'Select at least one worksheet to show changes.';
+      updateChangeTypeSummary();
+      const filteredDifferences = state.differences.filter((diff) => {
+        const matchesSheet = state.activeSheetFilters.has(diff.sheetName);
+        const matchesType =
+          (state.changeTypeFilters.formula && diff.formulaChanged) ||
+          (state.changeTypeFilters.value && diff.valueChanged);
+        return matchesSheet && matchesType;
+      });
+      const hasSheets = state.activeSheetFilters.size > 0;
+      const hasTypes = state.changeTypeFilters.formula || state.changeTypeFilters.value;
+      let emptyMessage = 'No changes found for the selected filters.';
+      if (!hasSheets && !hasTypes) {
+        emptyMessage = 'Select at least one worksheet and change type to show changes.';
+      } else if (!hasSheets) {
+        emptyMessage = 'Select at least one worksheet to show changes.';
+      } else if (!hasTypes) {
+        emptyMessage = 'Select at least one change type to show changes.';
+      }
       renderReport(filteredDifferences, state.lastRadius, emptyMessage);
       updateReportStats(filteredDifferences);
     };
@@ -466,6 +536,8 @@
           const oldInfo = getCellInfo(oldSheet, oldData, r, c);
           const newInfo = getCellInfo(newSheet, newData, r, c);
           if (oldInfo.compareKey !== newInfo.compareKey) {
+            const formulaChanged = oldInfo.formula !== newInfo.formula;
+            const valueChanged = compareValue(oldInfo.value) !== compareValue(newInfo.value);
             sheetDifferences.push({
               sheetName,
               row: r,
@@ -475,6 +547,8 @@
               newValue: newInfo.value,
               oldDisplay: oldInfo.display,
               newDisplay: newInfo.display,
+              formulaChanged,
+              valueChanged,
               oldData,
               newData
             });
@@ -530,6 +604,12 @@
       state.allSheetNames = allSheetNames;
       state.activeSheetFilters = new Set(allSheetNames);
       state.lastRadius = radius;
+      state.changeTypeFilters = {
+        formula: true,
+        value: true
+      };
+      filterFormulaChanges.checked = true;
+      filterValueChanges.checked = true;
 
       sheetInfo.textContent = `${allSheetNames.length} worksheet${allSheetNames.length === 1 ? '' : 's'} compared`;
       lastRun.textContent = new Date().toLocaleString();
@@ -548,9 +628,16 @@
       sheetFilterSummary.textContent = '(all)';
       state.allSheetNames = [];
       state.activeSheetFilters = new Set();
+      state.changeTypeFilters = {
+        formula: true,
+        value: true
+      };
       state.differences = [];
       state.lastRadius = 1;
       updateLoading({ active: false, progress: 0 });
+      filterFormulaChanges.checked = true;
+      filterValueChanges.checked = true;
+      updateChangeTypeSummary();
     };
 
     fileOld.addEventListener('change', async (event) => {
@@ -600,6 +687,32 @@
     clearSheetFilters.addEventListener('click', () => {
       state.activeSheetFilters = new Set();
       renderSheetFilters(state.allSheetNames);
+      applyWorksheetFilters();
+    });
+    selectAllChangeTypes.addEventListener('click', () => {
+      state.changeTypeFilters = {
+        formula: true,
+        value: true
+      };
+      filterFormulaChanges.checked = true;
+      filterValueChanges.checked = true;
+      applyWorksheetFilters();
+    });
+    clearChangeTypes.addEventListener('click', () => {
+      state.changeTypeFilters = {
+        formula: false,
+        value: false
+      };
+      filterFormulaChanges.checked = false;
+      filterValueChanges.checked = false;
+      applyWorksheetFilters();
+    });
+    filterFormulaChanges.addEventListener('change', () => {
+      state.changeTypeFilters.formula = filterFormulaChanges.checked;
+      applyWorksheetFilters();
+    });
+    filterValueChanges.addEventListener('change', () => {
+      state.changeTypeFilters.value = filterValueChanges.checked;
       applyWorksheetFilters();
     });
     clearReport.addEventListener('click', () => {
